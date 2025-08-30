@@ -4,8 +4,8 @@ micromamba create -n $ENV conda-forge::r-base=4.4.2 python=3.12 conda-forge::sin
 eval "$(micromamba shell hook --shell bash)"
 micromamba activate $ENV
 USER=$(whoami)
-TMPDIR=${TMPDIR:-tmp}
-CONTAINER="$RIVER_HOME/.river/images/singularities/images/rstudio-4.4.2.sif"
+TMPDIR=${TMPDIR:-$RIVER_HOME/tmp}
+CONTAINER="$RIVER_HOME/images/singularities/images/rstudio-4.4.2.sif"
 
 # Set-up temporary paths
 RSTUDIO_TMP="${TMPDIR}/$(echo -n $CONDA_PREFIX | md5sum | awk '{print $1}')"
@@ -15,7 +15,7 @@ R_BIN=$(which R)
 PY_BIN=$(which python)
 
 if [ ! -f $CONTAINER ]; then
-	singularity pull $CONTAINER docker://docker.io/rocker/rstudio:4.4.2
+        singularity pull $CONTAINER docker://docker.io/rocker/rstudio:4.4.2
 fi
 
 if [ -z "$CONDA_PREFIX" ]; then
@@ -25,7 +25,7 @@ fi
 
 echo "Starting rstudio service on port $PORT ..."
 # prepare database and session
-rstudio_home=$RIVER_HOME/.river/packages/rstudio 
+rstudio_home=$RIVER_HOME/packages/rstudio 
 rstudio_config=$rstudio_home/config
 mkdir -p $rstudio_config
 
@@ -41,21 +41,21 @@ if [ ! -f $db ]; then
 fi
 
 script -q -c "singularity run \
-	--bind $RSTUDIO_TMP/run:/run \
-	--bind $RSTUDIO_TMP/var-lib-rstudio-server:/var/lib/rstudio-server \
-	--bind /sys/fs/cgroup/:/sys/fs/cgroup/:ro \
-	--bind $db:/etc/rstudio/database.conf \
-	--bind $session:/etc/rstudio/rsession.conf \
-	--bind $RSTUDIO_TMP/local-share-rstudio:/home/rstudio/.local/share/rstudio \
-	--bind $rstudio_config:/home/rstudio/.config/rstudio \
-	--env RSTUDIO_WHICH_R=$R_BIN \
-	--env RETICULATE_PYTHON=$PY_BIN \
-	$CONTAINER \
-	rserver \
-		--www-address=0.0.0.0 \
-		--www-port=$PORT \
-		--workdir $HOME \
-		--rsession-which-r=$R_BIN \
-		--rsession-ld-library-path=$CONDA_PREFIX/lib \
+        --bind $RSTUDIO_TMP/run:/run \
+        --bind $RSTUDIO_TMP/var-lib-rstudio-server:/var/lib/rstudio-server \
+        --bind /sys/fs/cgroup/:/sys/fs/cgroup/:ro \
+        --bind $db:/etc/rstudio/database.conf \
+        --bind $session:/etc/rstudio/rsession.conf \
+        --bind $RSTUDIO_TMP/local-share-rstudio:/home/rstudio/.local/share/rstudio \
+        --bind $HOME:/home/rstudio \
+        --env RSTUDIO_WHICH_R=$R_BIN \
+        --env RETICULATE_PYTHON=$PY_BIN \
+        $CONTAINER \
+        rserver \
+                --www-address=0.0.0.0 \
+                --www-port=$PORT \
+                --server-working-dir $HOME \
+                --rsession-which-r=$R_BIN \
+                --rsession-ld-library-path=$CONDA_PREFIX/lib \
         --auth-none=1 \
-        --server-user $USER" /dev/null
+        --server-user $USER"
