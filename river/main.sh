@@ -1,13 +1,8 @@
 #!/bin/bash
-while IFS== read key value; do
-    printf -v "$key" "$value"
-done < <(jq -r 'to_entries|map("\(.key)=\(.value|tostring)")|.[]' config.json)
-
-PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('', 0)); print(s.getsockname()[1]); s.close()")
-echo $PORT > $RIVER_HOME/.river/jobs/$uuid_job_id/job.port
-echo $(hostname) > $RIVER_HOME/.river/jobs/$uuid_job_id/job.host
-echo "$uuid_job_id/" > $RIVER_HOME/.river/jobs/$uuid_job_id/job.proxy_location
-
+ENV=rserver-$tag
+micromamba create -n $ENV conda-forge::r-base=4.4.2 python=3.12 conda-forge::singularity=3.8.6 -y
+eval "$(micromamba shell hook --shell bash)"
+micromamba activate $ENV
 USER=$(whoami)
 TMPDIR=${TMPDIR:-tmp}
 CONTAINER="$RIVER_HOME/.river/images/singularities/images/rstudio-4.4.2.sif"
@@ -16,8 +11,8 @@ CONTAINER="$RIVER_HOME/.river/images/singularities/images/rstudio-4.4.2.sif"
 RSTUDIO_TMP="${TMPDIR}/$(echo -n $CONDA_PREFIX | md5sum | awk '{print $1}')"
 mkdir -p $RSTUDIO_TMP/{run,var-lib-rstudio-server,local-share-rstudio}
 
-R_BIN=$CONDA_PREFIX/bin/R
-PY_BIN=$CONDA_PREFIX/bin/python
+R_BIN=$(which R)
+PY_BIN=$(which python)
 
 if [ ! -f $CONTAINER ]; then
 	singularity pull $CONTAINER docker://docker.io/rocker/rstudio:4.4.2
@@ -59,6 +54,7 @@ script -q -c "singularity run \
 	rserver \
 		--www-address=0.0.0.0 \
 		--www-port=$PORT \
+		--workdir $HOME \
 		--rsession-which-r=$R_BIN \
 		--rsession-ld-library-path=$CONDA_PREFIX/lib \
         --auth-none=1 \
