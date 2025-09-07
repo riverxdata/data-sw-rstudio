@@ -1,8 +1,7 @@
 #!/bin/bash
 ENV=rserver-$tag
-micromamba create -n $ENV conda-forge::r-base=4.4.2 python=3.12 conda-forge::singularity=3.8.6 -y
-eval "$(micromamba shell hook --shell bash)"
-micromamba activate $ENV
+eval "$(micromamba shell hook --shell bash)" 
+micromamba activate $ENV||micromamba create -n $ENV conda-forge::r-base=4.4.2 conda-forge::python=3.12 conda-forge::singularity=3.8.6 -y && micromamba activate $ENV
 USER=$(whoami)
 TMPDIR=${TMPDIR:-$RIVER_HOME/tmp}
 CONTAINER="$RIVER_HOME/images/singularities/images/rstudio-4.4.2.sif"
