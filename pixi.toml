@@ -1,0 +1,12 @@
+[workspace]
+channels = ["conda-forge", "bioconda"]
+name = "data-sw-rstudio"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+r-base = { version = "4.4.2.*", channel = "conda-forge" }
+python = { version = "3.12.*", channel = "conda-forge" }
+singularity = { version = "3.8.6.*", channel = "conda-forge" }
