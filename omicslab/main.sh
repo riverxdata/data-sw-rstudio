@@ -168,13 +168,27 @@ else
 fi
 
 # --network host: required for port forwarding inside Docker-in-Docker.
-# -e DISABLE_AUTH=true: env var processed by s6-overlay into auth-none=1
-# --auth-none=1: explicit rserver flag as backup
-# --www-root-path=/: reverse proxy support
-# Foreground mode (--rm -i, no -d): script blocks so the platform knows the job is active.
+#
+# NOTE: RStudio Server (2024.x / rocker/rstudio) does NOT honour
+# ``DISABLE_AUTH=true`` — that only copies ``auth-none=1`` into
+# ``/etc/rstudio/rserver.conf``, which this build ignores. The reliable way to
+# disable authentication (and avoid the ``/`` <-> ``/auth-sign-in`` redirect
+# loop behind the reverse proxy) is to pass ``--auth-none=1`` on the command
+# line by overriding the s6 entrypoint and running ``rserver`` directly, exactly
+# like the apptainer-based launcher. ``--www-root-path=/`` tells RStudio it is
+# served at the proxy root so it generates correct external URLs.
+#
+# Foreground mode (--rm -i, no -d): script blocks so the platform knows the
+# job is active.
 $PODMAN run --rm -i \
     --name "$CONTAINER_NAME" \
     --network host \
     -e DISABLE_AUTH=true \
-    -e ADVERTISE_URL="${PUBLIC_URL:-}" \
-    "$CONTAINER_IMAGE"
+    --entrypoint /usr/lib/rstudio-server/bin/rserver \
+    "$CONTAINER_IMAGE" \
+    --auth-none=1 \
+    --www-address=0.0.0.0 \
+    --www-port="$PORT" \
+    --www-root-path=/ \
+    --server-working-dir "$HOST_HOME" \
+    --server-daemonize=0
