@@ -169,24 +169,31 @@ fi
 
 # --network host: required for port forwarding inside Docker-in-Docker.
 #
-# The s6 /init entrypoint handles writing ``auth-none=1`` into
-# ``/etc/rstudio/rserver.conf`` when ``DISABLE_AUTH=true`` is set.
-# Do NOT override the entrypoint or pass ``--auth-none=1`` on the command line
-# — RStudio Server (2024.x / rocker/rstudio) ignores the CLI flag and only
-# respects the config file written by the s6 init scripts.
-# ``--www-root-path=/`` tells RStudio it is served at the proxy root so
-# it generates correct external URLs.
+# RStudio Server (2024.x / rocker/rstudio) ignores ``--auth-none=1`` on the
+# command line. The only reliable way to disable auth is to write
+# ``auth-none=1`` into ``/etc/rstudio/rserver.conf``. We generate a temp
+# config and bind-mount it into the container.
+#
+# The s6 /init entrypoint is kept (no --entrypoint override) so that
+# ``DISABLE_AUTH=true`` is also honored by the s6 init scripts as a fallback.
 #
 # Foreground mode (--rm -i, no -d): script blocks so the platform knows the
 # job is active.
+_RSTUDIO_CONF="$(mktemp)"
+cat > "$_RSTUDIO_CONF" <<RSCONF
+auth-none=1
+www-address=0.0.0.0
+www-port=${PORT}
+www-root-path=/
+server-working-dir=${HOST_HOME}
+server-daemonize=0
+RSCONF
+trap 'rm -f "$_RStudio_CONF"' EXIT
+
 $PODMAN run --rm -i \
     --name "$CONTAINER_NAME" \
     --network host \
     -e DISABLE_AUTH=true \
     -v "$HOST_HOME:$HOST_HOME" \
-    "$CONTAINER_IMAGE" \
-    --www-address=0.0.0.0 \
-    --www-port="$PORT" \
-    --www-root-path=/ \
-    --server-working-dir "$HOST_HOME" \
-    --server-daemonize=0
+    -v "$_RStudio_CONF:/etc/rstudio/rserver.conf:ro" \
+    "$CONTAINER_IMAGE"
