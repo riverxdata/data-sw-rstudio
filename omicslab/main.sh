@@ -2,79 +2,138 @@
 set -euo pipefail
 
 R_VERSION="${r_version:-4.4.2}"
-DOCKER_IMAGE="docker.io/rocker/rstudio:${R_VERSION}"
+CONTAINER_IMAGE="docker.io/rocker/rstudio:${R_VERSION}"
 CONTAINER_NAME="rstudio-server"
 PORT="${PORT:-6868}"
 
 TOOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-RSTUDIO_WORKSPACE="$HOME/rstudio-workspace"
-mkdir -p "$RSTUDIO_WORKSPACE"
+# Podman is provided by the pixi workspace (installed by the bootstrap).
+# The bootstrap exports $HOME/.pixi/bin to PATH and runs pixi install.
+PODMAN="pixi run podman"
+echo "Using podman: $($PODMAN --version)"
+
+# --- Detect environment: podman-in-Docker vs real VM ---
+# On a real VM (EC2, OpenStack) the root filesystem is ext4/xfs and podman's
+# native overlay driver works out of the box.  Inside a Docker-simulated VM
+# the root is overlayfs, so we need fuse-overlayfs for the storage driver and
+# nftables for netavark's network rules.
+_is_overlayfs() {
+    local fs
+    fs=$(stat -f -c '%T' / 2>/dev/null || echo "unknown")
+    [ "$fs" = "overlayfs" ]
+}
 
 # --- Podman configuration ---
-# Podman >=5 (installed via pixi) auto-detects the netavark network backend and
-# the overlay storage driver, and needs no custom config. The default rootful
-# graphroot (/var/lib/containers/storage) is exactly where the Docker simulation
-# bind-mounts its host-backed storage, so this works unchanged on both the VM
-# and the nested-container simulation.
-#
-# Netavark (podman >=5's network backend) requires a firewall backend (nftables
-# or iptables) to program port-mapping rules. The base image does not ship one,
-# so install it at runtime when missing. (Note: `passt` only helps *rootless*
-# podman via the pasta driver, not this rootful setup, so it is not used here.)
+_configure_podman() {
+    # Find the pixi env prefix (where podman binary lives)
+    local PIXI_PREFIX
+    PIXI_PREFIX="$(dirname "$(dirname "$($PODMAN --which podman 2>/dev/null)")")"
 
-if ! command -v nft >/dev/null 2>&1 && ! command -v iptables >/dev/null 2>&1; then
-    if command -v apt-get >/dev/null 2>&1; then
-        apt-get update >/dev/null 2>&1 || true
-        apt-get install -y nftables iptables >/dev/null 2>&1 || true
+    # /etc/containers/policy.json — allow pulling any image
+    if [ ! -f /etc/containers/policy.json ]; then
+        mkdir -p /etc/containers
+        cat > /etc/containers/policy.json <<'POLICY'
+{
+  "default": [{"type": "insecureAcceptAnything"}]
+}
+POLICY
     fi
-fi
 
-# Clean up stale CNI bridge left by older podman versions.  If this DOWN
-# interface still has a route for 10.88.0.0/16, netavark packets silently
-# go to the dead link instead of the live podman0 bridge.
-ip link del cni-podman0 2>/dev/null || true
+    if _is_overlayfs; then
+        # --- Podman-in-Docker: overlay on overlayfs requires fuse-overlayfs ---
+        echo "Detected overlayfs root — configuring podman for Docker-in-Docker"
 
-# Diagnostic: confirm podman auto-config (netavark + overlay).
-echo "--- podman effective config ---"
-podman info 2>&1 | grep -iE "networkBackend|graphDriverName" || true
+        if ! command -v fuse-overlayfs >/dev/null 2>&1; then
+            apt-get update -qq >/dev/null 2>&1 || true
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fuse-overlayfs 2>&1 | tail -1
+        fi
+        if ! command -v nft >/dev/null 2>&1; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nftables 2>&1 | tail -1
+        fi
 
-# Ensure an insecureAcceptAnything policy so the pre-cached image can be loaded.
-POLICY_FILE="${HOME}/.config/containers/policy.json"
-if [ ! -f "$POLICY_FILE" ]; then
-    mkdir -p "$(dirname "$POLICY_FILE")"
-    echo '{"default":[{"type":"insecureAcceptAnything"}]}' > "$POLICY_FILE"
-fi
-mkdir -p "${HOME}/.local/share/containers"
+        mkdir -p /root/.config/containers
+        cat > /root/.config/containers/storage.conf <<'STORAGE'
+[storage]
+driver = "overlay"
 
-echo "Using podman: $(which podman)"
+[storage.options.overlay]
+mount_program = "/usr/bin/fuse-overlayfs"
+STORAGE
+
+        mkdir -p "$PIXI_PREFIX/etc/containers"
+        cat > "$PIXI_PREFIX/etc/containers/containers.conf" <<'CONF'
+[engine]
+network_backend = "netavark"
+
+[network]
+network_backend = "netavark"
+CONF
+    else
+        # --- Real VM: native overlay works, just set network backend ---
+        echo "Detected native filesystem — configuring podman for real VM"
+
+        mkdir -p /root/.config/containers
+        cat > /root/.config/containers/storage.conf <<'STORAGE'
+[storage]
+driver = "overlay"
+STORAGE
+
+        mkdir -p "$PIXI_PREFIX/etc/containers"
+        cat > "$PIXI_PREFIX/etc/containers/containers.conf" <<'CONF'
+[engine]
+network_backend = "netavark"
+
+[network]
+network_backend = "netavark"
+CONF
+    fi
+
+    # Remove any stale netavark nftables table from previous runs
+    nft delete table inet netavark 2>/dev/null || true
+
+    # Reset stale storage if it has mixed drivers (e.g. leftover vfs + overlay)
+    local storage_driver
+    storage_driver=$($PODMAN info --format '{{.Driver}}' 2>/dev/null || echo "unknown")
+    if [ "$storage_driver" = "unknown" ] || [ -z "$storage_driver" ]; then
+        echo "Resetting podman storage (mixed/stale drivers detected)..."
+        $PODMAN system reset --force 2>/dev/null || true
+    fi
+}
+
+_configure_podman
+
+echo "Podman storage: $($PODMAN info --format '{{.GraphDriverName}}' 2>/dev/null || echo 'unknown')"
+echo "Podman network: $($PODMAN info --format '{{.NetworkBackend}}' 2>/dev/null || echo 'unknown')"
 
 # --- Image Loading ---
 if [ -n "${image:-}" ] && [ -f "$image" ]; then
-    # Skip loading if image is already in local storage
-    if podman image exists "$DOCKER_IMAGE" 2>/dev/null; then
-        echo "Image already loaded: $DOCKER_IMAGE"
+    if $PODMAN image inspect "$CONTAINER_IMAGE" >/dev/null 2>&1; then
+        echo "Image already loaded: $CONTAINER_IMAGE"
     else
         echo "Loading pre-cached image from: $image"
         case "$image" in
             *.tar.zst|*.zst)
-                zstd -d "$image" --stdout | podman load
+                TMP_TAR="$(mktemp --suffix=.tar)"
+                zstd -d "$image" -o "$TMP_TAR" -f
+                $PODMAN load -i "$TMP_TAR"
+                rm -f "$TMP_TAR"
                 ;;
             *)
-                podman load -i "$image"
+                $PODMAN load -i "$image"
                 ;;
         esac
-        LOADED_IMAGE=$(podman images --format '{{.Repository}}:{{.Tag}}' | grep -v "<none>" | head -1)
+        LOADED_IMAGE=$($PODMAN images --format '{{.Repository}}:{{.Tag}}' | grep -v "<none>" | head -1)
         echo "Loaded image: $LOADED_IMAGE"
-        DOCKER_IMAGE="$LOADED_IMAGE"
+        CONTAINER_IMAGE="$LOADED_IMAGE"
     fi
 elif [ -n "${image:-}" ]; then
     echo "WARNING: image path set but file not found: $image"
-    echo "Falling back to Docker Hub pull..."
-    podman pull "$DOCKER_IMAGE"
+    echo "Falling back to pull from Docker Hub..."
+    $PODMAN pull "$CONTAINER_IMAGE"
 else
     echo "No pre-cached image. Pulling from Docker Hub..."
-    podman pull "$DOCKER_IMAGE"
+    $PODMAN pull "$CONTAINER_IMAGE"
 fi
 
 echo "Starting rstudio on port $PORT ..."
@@ -91,14 +150,11 @@ _snapshot_cleanup() {
         SNAPSHOT_TAG="rstudio-snapshot:${TIMESTAMP}"
         SNAPSHOT_ZSTD="$SNAPSHOT_DIR/rstudio-${job_id:-unknown}-${TIMESTAMP}.tar.zst"
 
-        # Commit the running container to a new image
-        podman commit "$CONTAINER_NAME" "$SNAPSHOT_TAG" 2>/dev/null || true
+        $PODMAN commit "$CONTAINER_NAME" "$SNAPSHOT_TAG" 2>/dev/null || true
 
-        # Save the committed snapshot with zstd compression
         echo "Saving snapshot to: $SNAPSHOT_ZSTD"
-        podman save "$SNAPSHOT_TAG" 2>/dev/null | zstd -T0 -o "$SNAPSHOT_ZSTD" 2>/dev/null || true
+        $PODMAN save "$SNAPSHOT_TAG" 2>/dev/null | zstd -T0 -o "$SNAPSHOT_ZSTD" 2>/dev/null || true
 
-        # Upload to S3 if outdir is set
         if [ -n "${outdir:-}" ]; then
             S3_UPLOAD_PATH="${outdir}/${job_id:-unknown}/"
             echo "Uploading snapshot to: $S3_UPLOAD_PATH"
@@ -116,25 +172,28 @@ _snapshot_cleanup() {
 trap _snapshot_cleanup EXIT
 
 # --- Run RStudio Server ---
-CONTAINER_R_LIBS="/home/rstudio/R/library"
-CONTAINER_PY_SITE="/home/rstudio/.local/lib/python3.12/site-packages"
 
-# Remove any existing container with the same name before starting.
-podman rm -f "$CONTAINER_NAME" 2>/dev/null || true
+$PODMAN rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
-# Clean up ALL stale podman containers left from previous jobs to free
-# port mappings and avoid stale netavark DNAT rules.
-podman rm -f -a 2>/dev/null || true
+if [ -d /home/river ]; then
+    HOST_HOME=/home/river
+elif [ -d /home/omicslab ]; then
+    HOST_HOME=/home/omicslab
+else
+    HOST_HOME="$HOME"
+fi
 
-# Mount only the workspace (rw) and the job data directory (ro, contains
-# mount-s3 data).  Do NOT mount $HOME or /tmp which may contain IAM
-# credentials or other sensitive files.
-JOB_DIR="$HOME/sdk/jobs/${job_id:-.}"
-
-podman run --rm -i \
+# --network host: works on real VMs and avoids broken DNAT inside Docker-in-Docker.
+$PODMAN run -d \
     --name "$CONTAINER_NAME" \
-    -p "$PORT:8787" \
-    -v "$RSTUDIO_WORKSPACE:/home/rstudio/rstudio-workspace" \
-    -v "$JOB_DIR:/home/rstudio/job:ro" \
+    --network host \
+    -v "${HOST_HOME}:${HOST_HOME}" \
+    -w "${HOST_HOME}" \
     -e DISABLE_AUTH=true \
-    $DOCKER_IMAGE
+    "$CONTAINER_IMAGE" \
+    bash -c "exec rserver \
+        --www-address=0.0.0.0 \
+        --www-port=${PORT} \
+        --server-working-dir ${HOST_HOME} \
+        --auth-none=1 \
+        --server-daemonize=0"

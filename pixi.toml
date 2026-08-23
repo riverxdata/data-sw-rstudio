@@ -2,10 +2,10 @@
 channels = ["conda-forge", "bioconda"]
 name = "rstudio"
 platforms = ["linux-64"]
-version = "0.1.0"
+version = "1.0.0"
 
 [tasks]
 
 [dependencies]
-podman = ">=5"
 zstd = ">=1.5.7,<2"
+podman = ">=5.8.3,<6"

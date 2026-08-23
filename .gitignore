@@ -5,3 +5,6 @@ work
 
 # container images
 images/
+
+# runtime podman config (created by main.sh inside containers)
+etc/
