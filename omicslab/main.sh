@@ -178,7 +178,9 @@ else
 fi
 
 # --network host: works on real VMs and avoids broken DNAT inside Docker-in-Docker.
-$PODMAN run -d \
+# Foreground mode (no -d): script blocks while RStudio runs so the platform
+# knows the job is still active.
+$PODMAN run --rm -i \
     --name "$CONTAINER_NAME" \
     --network host \
     -v "${HOST_HOME}:${HOST_HOME}" \
