@@ -93,14 +93,6 @@ CONF
 
     # Remove any stale netavark nftables table from previous runs
     nft delete table inet netavark 2>/dev/null || true
-
-    # Reset stale storage if it has mixed drivers (e.g. leftover vfs + overlay)
-    local storage_driver
-    storage_driver=$($PODMAN info --format '{{.Driver}}' 2>/dev/null || echo "unknown")
-    if [ "$storage_driver" = "unknown" ] || [ -z "$storage_driver" ]; then
-        echo "Resetting podman storage (mixed/stale drivers detected)..."
-        $PODMAN system reset --force 2>/dev/null || true
-    fi
 }
 
 _configure_podman
