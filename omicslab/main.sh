@@ -37,13 +37,13 @@ mkdir -p "$XDG_CONF_DIR" "${PODMAN_ENV_DIR}/etc/containers"
 CONTAINERS_CONF="${PODMAN_ENV_DIR}/etc/containers/containers.conf"
 CONTAINERS_STORAGE_CONF="${PODMAN_ENV_DIR}/etc/containers/storage.conf"
 
-# Use vfs when running on top of an overlayfs-backed filesystem (e.g. nested
-# containers); overlay otherwise. This avoids the
-# "'overlay' is not supported over overlayfs" error.
+# Use overlay driver. Storage root defaults to the standard podman location
+# (/var/lib/containers/storage); override via PODMAN_STORAGE_ROOT to place it
+# on a real filesystem (e.g. ext4 bind-mount) when '/' is overlayfs (nested
+# containers). On a real VM the default path sits on ext4 and just works.
 STORAGE_DRIVER="overlay"
-if findmnt -n -o fstype / 2>/dev/null | grep -qE "overlay"; then
-    STORAGE_DRIVER="vfs"
-fi
+STORAGE_ROOT="${PODMAN_STORAGE_ROOT:-/var/lib/containers/storage}"
+mkdir -p "$STORAGE_ROOT"
 
 write_containers_conf() {
 cat <<EOF
@@ -61,8 +61,8 @@ write_storage_conf() {
 cat <<EOF
 [storage]
 driver = "${STORAGE_DRIVER}"
-runroot = "${PODMAN_ENV_DIR}/../run/containers/storage"
-graphroot = "${PODMAN_ENV_DIR}/../storage/containers"
+runroot = "${STORAGE_ROOT}/run"
+graphroot = "${STORAGE_ROOT}/containers"
 EOF
 }
 
