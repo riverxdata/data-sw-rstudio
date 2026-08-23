@@ -158,18 +158,20 @@ if [ -n "$_stale_pids" ]; then
     sleep 1
 fi
 
-# Run rserver directly with flags instead of relying on s6-overlay.
-# --www-root-path=/ : tells RStudio it's served at the root (needed behind reverse proxy)
-# --auth-none=1     : disables authentication
-# --network host    : required for port forwarding inside Docker-in-Docker
+# Use the default s6-overlay entrypoint — it processes DISABLE_AUTH=true
+# into auth-none=1 config automatically.
+# Mount rserver.conf with www-root-path=/ for reverse proxy support.
+# --network host: required for port forwarding inside Docker-in-Docker.
 # Foreground mode (--rm -i, no -d): script blocks so the platform knows the job is active.
+mkdir -p "${TOOL_DIR}/config"
+cat > "${TOOL_DIR}/config/rserver.conf" <<'RSERVER'
+rsession-which-r=/usr/local/bin/R
+www-root-path=/
+RSERVER
+
 $PODMAN run --rm -i \
     --name "$CONTAINER_NAME" \
     --network host \
-    "$CONTAINER_IMAGE" \
-    bash -c "exec rserver \
-        --www-address=0.0.0.0 \
-        --www-port=${PORT} \
-        --www-root-path=/ \
-        --auth-none=1 \
-        --server-daemonize=0"
+    -e DISABLE_AUTH=true \
+    -v "${TOOL_DIR}/config/rserver.conf:/etc/rstudio/rserver.conf:ro" \
+    "$CONTAINER_IMAGE"
