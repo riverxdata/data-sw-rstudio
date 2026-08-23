@@ -176,4 +176,5 @@ $PODMAN run --rm -i \
     --name "$CONTAINER_NAME" \
     --network host \
     -e DISABLE_AUTH=true \
+    -e ADVERTISE_URL="${PUBLIC_URL:-}" \
     "$CONTAINER_IMAGE"
