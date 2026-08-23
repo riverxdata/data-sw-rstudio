@@ -162,7 +162,8 @@ fi
 # --www-root-path=/ : tells RStudio it's served at the root (needed behind reverse proxy)
 # --auth-none=1     : disables authentication
 # --network host    : required for port forwarding inside Docker-in-Docker
-$PODMAN run -d \
+# Foreground mode (--rm -i, no -d): script blocks so the platform knows the job is active.
+$PODMAN run --rm -i \
     --name "$CONTAINER_NAME" \
     --network host \
     "$CONTAINER_IMAGE" \
