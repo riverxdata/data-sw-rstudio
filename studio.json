@@ -1,0 +1,5 @@
+{
+  "services": [
+    {"name": "rstudio", "port": 8787, "path": "/"}
+  ]
+}

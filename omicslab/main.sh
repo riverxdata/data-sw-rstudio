@@ -4,20 +4,15 @@ set -euo pipefail
 R_VERSION="${r_version:-4.4.2}"
 CONTAINER_IMAGE="docker.io/rocker/rstudio:${R_VERSION}"
 CONTAINER_NAME="rstudio-server"
-PORT="${PORT:-6868}"
+PORT=8787
 
 TOOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Podman is provided by the pixi workspace (installed by the bootstrap).
-# The bootstrap exports $HOME/.pixi/bin to PATH and runs pixi install.
 PODMAN="pixi run podman"
 echo "Using podman: $($PODMAN --version)"
 
 # --- Detect environment: podman-in-Docker vs real VM ---
-# On a real VM (EC2, OpenStack) the root filesystem is ext4/xfs and podman's
-# native overlay driver works out of the box.  Inside a Docker-simulated VM
-# the root is overlayfs, so we need fuse-overlayfs for the storage driver and
-# nftables for netavark's network rules.
 _is_overlayfs() {
     local fs
     fs=$(stat -f -c '%T' / 2>/dev/null || echo "unknown")
@@ -26,11 +21,9 @@ _is_overlayfs() {
 
 # --- Podman configuration ---
 _configure_podman() {
-    # Find the pixi env prefix (where podman binary lives)
     local PIXI_PREFIX
     PIXI_PREFIX="$(dirname "$(dirname "$($PODMAN --which podman 2>/dev/null)")")"
 
-    # /etc/containers/policy.json — allow pulling any image
     if [ ! -f /etc/containers/policy.json ]; then
         mkdir -p /etc/containers
         cat > /etc/containers/policy.json <<'POLICY'
@@ -41,9 +34,7 @@ POLICY
     fi
 
     if _is_overlayfs; then
-        # --- Podman-in-Docker: overlay on overlayfs requires fuse-overlayfs ---
         echo "Detected overlayfs root — configuring podman for Docker-in-Docker"
-
         if ! command -v fuse-overlayfs >/dev/null 2>&1 || ! command -v nft >/dev/null 2>&1; then
             apt-get update -qq >/dev/null 2>&1 || true
         fi
@@ -72,9 +63,7 @@ network_backend = "netavark"
 network_backend = "netavark"
 CONF
     else
-        # --- Real VM: native overlay works, just set network backend ---
         echo "Detected native filesystem — configuring podman for real VM"
-
         mkdir -p /root/.config/containers
         cat > /root/.config/containers/storage.conf <<'STORAGE'
 [storage]
@@ -91,14 +80,10 @@ network_backend = "netavark"
 CONF
     fi
 
-    # Remove any stale netavark nftables table from previous runs
     nft delete table inet netavark 2>/dev/null || true
 }
 
 _configure_podman
-
-echo "Podman storage: $($PODMAN info --format '{{.GraphDriverName}}' 2>/dev/null || echo 'unknown')"
-echo "Podman network: $($PODMAN info --format '{{.NetworkBackend}}' 2>/dev/null || echo 'unknown')"
 
 # --- Image Loading ---
 if [ -n "${image:-}" ] && [ -f "$image" ]; then
@@ -130,7 +115,7 @@ else
     $PODMAN pull "$CONTAINER_IMAGE"
 fi
 
-echo "Starting rstudio on port $PORT ..."
+echo "Starting rstudio on port 8787 ..."
 
 # --- Snapshot on Stop ---
 _snapshot_cleanup() {
@@ -139,13 +124,11 @@ _snapshot_cleanup() {
         echo "Snapshot enabled. Saving container state as zstd..."
         SNAPSHOT_DIR="$HOME/rstudio-snapshots"
         mkdir -p "$SNAPSHOT_DIR"
-
         TIMESTAMP=$(date +%Y%m%d%H%M%S)
         SNAPSHOT_TAG="rstudio-snapshot:${TIMESTAMP}"
         SNAPSHOT_ZSTD="$SNAPSHOT_DIR/rstudio-${job_id:-unknown}-${TIMESTAMP}.tar.zst"
 
         $PODMAN commit "$CONTAINER_NAME" "$SNAPSHOT_TAG" 2>/dev/null || true
-
         echo "Saving snapshot to: $SNAPSHOT_ZSTD"
         $PODMAN save "$SNAPSHOT_TAG" 2>/dev/null | zstd -T0 -o "$SNAPSHOT_ZSTD" 2>/dev/null || true
 
@@ -157,7 +140,6 @@ _snapshot_cleanup() {
                     --endpoint-url "${AWS_ENDPOINT_URL:-}" 2>/dev/null || true
             fi
         fi
-
         rm -f "$SNAPSHOT_ZSTD"
         echo "Snapshot complete."
     fi
@@ -167,29 +149,20 @@ trap _snapshot_cleanup EXIT
 
 # --- Run RStudio Server ---
 
+# Clean up stale containers and orphaned processes on port 8787.
 $PODMAN rm -f "$CONTAINER_NAME" 2>/dev/null || true
-
-if [ -d /home/river ]; then
-    HOST_HOME=/home/river
-elif [ -d /home/omicslab ]; then
-    HOST_HOME=/home/omicslab
-else
-    HOST_HOME="$HOME"
+_stale_pids=$(lsof -t -i:8787 2>/dev/null || true)
+if [ -n "$_stale_pids" ]; then
+    echo "Killing stale processes on port 8787: $_stale_pids"
+    kill -9 $_stale_pids 2>/dev/null || true
+    sleep 1
 fi
 
+# Use the default s6-overlay entrypoint — it processes DISABLE_AUTH=true
+# into auth-none=1 config automatically. No custom entrypoint needed.
 # --network host: works on real VMs and avoids broken DNAT inside Docker-in-Docker.
-# Foreground mode (no -d): script blocks while RStudio runs so the platform
-# knows the job is still active.
 $PODMAN run --rm -i \
     --name "$CONTAINER_NAME" \
     --network host \
-    -v "${HOST_HOME}:${HOST_HOME}" \
-    -w "${HOST_HOME}" \
     -e DISABLE_AUTH=true \
-    "$CONTAINER_IMAGE" \
-    bash -c "exec rserver \
-        --www-address=0.0.0.0 \
-        --www-port=${PORT} \
-        --server-working-dir ${HOST_HOME} \
-        --auth-none=1 \
-        --server-daemonize=0"
+    "$CONTAINER_IMAGE"

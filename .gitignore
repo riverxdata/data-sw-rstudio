@@ -8,3 +8,6 @@ images/
 
 # runtime podman config (created by main.sh inside containers)
 etc/
+
+# rstudio runtime state
+rstudio-workspace/
