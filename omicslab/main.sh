@@ -188,12 +188,12 @@ www-root-path=/
 server-working-dir=${HOST_HOME}
 server-daemonize=0
 RSCONF
-trap 'rm -f "$_RStudio_CONF"' EXIT
+trap 'rm -f "$_RSTUDIO_CONF"' EXIT
 
 $PODMAN run --rm -i \
     --name "$CONTAINER_NAME" \
     --network host \
     -e DISABLE_AUTH=true \
     -v "$HOST_HOME:$HOST_HOME" \
-    -v "$_RStudio_CONF:/etc/rstudio/rserver.conf:ro" \
+    -v "$_RSTUDIO_CONF:/etc/rstudio/rserver.conf:ro" \
     "$CONTAINER_IMAGE"
