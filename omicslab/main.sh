@@ -195,5 +195,5 @@ $PODMAN run --rm -i \
     --network host \
     -e DISABLE_AUTH=true \
     -v "$HOST_HOME:$HOST_HOME" \
-    -v "$_RSTUDIO_CONF:/etc/rstudio/rserver.conf:ro" \
+    -v "$_RSTUDIO_CONF:/etc/rstudio/rserver.conf" \
     "$CONTAINER_IMAGE"
