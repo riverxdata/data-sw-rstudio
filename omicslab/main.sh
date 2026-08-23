@@ -44,8 +44,10 @@ POLICY
         # --- Podman-in-Docker: overlay on overlayfs requires fuse-overlayfs ---
         echo "Detected overlayfs root — configuring podman for Docker-in-Docker"
 
-        if ! command -v fuse-overlayfs >/dev/null 2>&1; then
+        if ! command -v fuse-overlayfs >/dev/null 2>&1 || ! command -v nft >/dev/null 2>&1; then
             apt-get update -qq >/dev/null 2>&1 || true
+        fi
+        if ! command -v fuse-overlayfs >/dev/null 2>&1; then
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fuse-overlayfs 2>&1 | tail -1
         fi
         if ! command -v nft >/dev/null 2>&1; then
