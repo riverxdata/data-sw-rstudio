@@ -115,7 +115,7 @@ else
     $PODMAN pull "$CONTAINER_IMAGE"
 fi
 
-echo "Starting rstudio on port 8787 ..."
+echo "Starting rstudio on port $PORT ..."
 
 # --- Snapshot on Stop ---
 _snapshot_cleanup() {
@@ -149,20 +149,28 @@ trap _snapshot_cleanup EXIT
 
 # --- Run RStudio Server ---
 
-# Clean up stale containers and orphaned processes on port 8787.
+# Clean up stale containers and orphaned processes on port.
 $PODMAN rm -f "$CONTAINER_NAME" 2>/dev/null || true
-_stale_pids=$(lsof -t -i:8787 2>/dev/null || true)
+_stale_pids=$(lsof -t -i:"$PORT" 2>/dev/null || true)
 if [ -n "$_stale_pids" ]; then
-    echo "Killing stale processes on port 8787: $_stale_pids"
+    echo "Killing stale processes on port $PORT: $_stale_pids"
     kill -9 $_stale_pids 2>/dev/null || true
     sleep 1
 fi
 
-# Use the default s6-overlay entrypoint — it processes DISABLE_AUTH=true
-# into auth-none=1 config automatically. No custom entrypoint needed.
-# --network host: works on real VMs and avoids broken DNAT inside Docker-in-Docker.
-$PODMAN run --rm -i \
+# Run rserver directly with flags instead of relying on s6-overlay.
+# --www-root-path=/ : tells RStudio it's served at the root (needed behind reverse proxy)
+# --auth-none=1     : disables authentication
+# --network host    : required for port forwarding inside Docker-in-Docker
+$PODMAN run -d \
     --name "$CONTAINER_NAME" \
     --network host \
-    -e DISABLE_AUTH=true \
-    "$CONTAINER_IMAGE"
+    "$CONTAINER_IMAGE" \
+    bash -c "exec rserver \
+        --www-address=0.0.0.0 \
+        --www-port=${PORT} \
+        --www-root-path=/ \
+        --auth-none=1 \
+        --server-daemonize=0"
+
+echo "RStudio started on http://localhost:$PORT"
