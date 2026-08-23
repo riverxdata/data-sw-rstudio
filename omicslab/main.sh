@@ -11,77 +11,18 @@ TOOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RSTUDIO_WORKSPACE="$HOME/rstudio-workspace"
 mkdir -p "$RSTUDIO_WORKSPACE"
 
-# --- Podman auto-configuration ---
-# Find podman binary (via pixi or system) and derive helper paths.
-PODMAN_BIN="$(which podman)"
-PODMAN_ENV_DIR="$(dirname "$(dirname "$PODMAN_BIN")")"
+# --- Podman configuration ---
+# Podman >=5 (installed via pixi) auto-detects the netavark network backend and
+# the overlay storage driver, and needs no custom config. The default rootful
+# graphroot (/var/lib/containers/storage) is exactly where the Docker simulation
+# bind-mounts its host-backed storage, so this works unchanged on both the VM
+# and the nested-container simulation.
 
-# Auto-detect network backend: podman 5.x uses netavark, older uses cni.
-if [ -f "$PODMAN_ENV_DIR/lib/podman/netavark" ]; then
-    NET_BACKEND="netavark"
-    CNI_HELPERS=""
-else
-    NET_BACKEND="cni"
-    CNI_HELPERS=",
-    \"${PODMAN_ENV_DIR}/lib/cni\""
-fi
-
-# Write containers.conf + storage.conf.
-# Podman always reads the per-user config at ~/.config/containers/ by default,
-# so we write there too. We ALSO point CONTAINERS_CONF / CONTAINERS_STORAGE_CONF
-# at the pixi-env copy so the config is applied regardless of how the launcher
-# invokes this script (env var honored or not).
-XDG_CONF_DIR="${HOME}/.config/containers"
-mkdir -p "$XDG_CONF_DIR" "${PODMAN_ENV_DIR}/etc/containers"
-
-CONTAINERS_CONF="${PODMAN_ENV_DIR}/etc/containers/containers.conf"
-CONTAINERS_STORAGE_CONF="${PODMAN_ENV_DIR}/etc/containers/storage.conf"
-
-# Use overlay driver. Storage root defaults to the standard podman location
-# (/var/lib/containers/storage); override via PODMAN_STORAGE_ROOT to place it
-# on a real filesystem (e.g. ext4 bind-mount) when '/' is overlayfs (nested
-# containers). On a real VM the default path sits on ext4 and just works.
-STORAGE_DRIVER="overlay"
-STORAGE_ROOT="${PODMAN_STORAGE_ROOT:-/var/lib/containers/storage}"
-mkdir -p "$STORAGE_ROOT"
-
-write_containers_conf() {
-cat <<EOF
-[engine]
-helper_binaries_dir = [
-    "${PODMAN_ENV_DIR}/libexec/podman",
-    "${PODMAN_ENV_DIR}/lib/podman"${CNI_HELPERS}
-]
-
-[network]
-network_backend = "${NET_BACKEND}"
-EOF
-}
-write_storage_conf() {
-cat <<EOF
-[storage]
-driver = "${STORAGE_DRIVER}"
-runroot = "${STORAGE_ROOT}/run"
-graphroot = "${STORAGE_ROOT}/containers"
-EOF
-}
-
-write_containers_conf | tee "$CONTAINERS_CONF" "$XDG_CONF_DIR/containers.conf" >/dev/null
-write_storage_conf     | tee "$CONTAINERS_STORAGE_CONF" "$XDG_CONF_DIR/storage.conf" >/dev/null
-export CONTAINERS_CONF
-export CONTAINERS_STORAGE_CONF
-
-# Wrap podman so CONTAINERS_CONF and CONTAINERS_STORAGE_CONF are always applied,
-# even if the parent shell/launcher does not propagate exported env vars.
-podman() {
-    env CONTAINERS_CONF="$CONTAINERS_CONF" CONTAINERS_STORAGE_CONF="$CONTAINERS_STORAGE_CONF" "$(which podman)" "$@"
-}
-
-# Diagnostic: confirm podman is reading our config (helper path + storage driver).
+# Diagnostic: confirm podman auto-config (netavark + overlay).
 echo "--- podman effective config ---"
-podman info 2>&1 | grep -iE "helperBinariesDir|networkBackend|graphDriverName|driverName" || true
+podman info 2>&1 | grep -iE "networkBackend|graphDriverName" || true
 
-# Ensure rootless policy and storage
+# Ensure an insecureAcceptAnything policy so the pre-cached image can be loaded.
 POLICY_FILE="${HOME}/.config/containers/policy.json"
 if [ ! -f "$POLICY_FILE" ]; then
     mkdir -p "$(dirname "$POLICY_FILE")"
@@ -89,7 +30,7 @@ if [ ! -f "$POLICY_FILE" ]; then
 fi
 mkdir -p "${HOME}/.local/share/containers"
 
-echo "Using podman: $PODMAN_BIN (network: $NET_BACKEND)"
+echo "Using podman: $(which podman)"
 
 # --- Image Loading ---
 if [ -n "${image:-}" ] && [ -f "$image" ]; then
