@@ -158,12 +158,31 @@ if [ -n "$_stale_pids" ]; then
     sleep 1
 fi
 
-# Use the default s6-overlay entrypoint — it processes DISABLE_AUTH=true
-# into auth-none=1 config automatically. Port 8787 is the default.
+# Detect the user home directory to mount inside the container.
+if [ -d /home/river ]; then
+    HOST_HOME=/home/river
+elif [ -d /home/omicslab ]; then
+    HOST_HOME=/home/omicslab
+else
+    HOST_HOME="$HOME"
+fi
+
 # --network host: required for port forwarding inside Docker-in-Docker.
+# -e DISABLE_AUTH=true: env var processed by s6-overlay into auth-none=1
+# --auth-none=1: explicit rserver flag as backup
+# --www-root-path=/: reverse proxy support
 # Foreground mode (--rm -i, no -d): script blocks so the platform knows the job is active.
 $PODMAN run --rm -i \
     --name "$CONTAINER_NAME" \
     --network host \
+    -v "${HOST_HOME}:${HOST_HOME}" \
+    -w "${HOST_HOME}" \
     -e DISABLE_AUTH=true \
-    "$CONTAINER_IMAGE"
+    "$CONTAINER_IMAGE" \
+    bash -c "exec rserver \
+        --www-address=0.0.0.0 \
+        --www-port=${PORT} \
+        --www-root-path=/ \
+        --server-working-dir ${HOST_HOME} \
+        --auth-none=1 \
+        --server-daemonize=0"
