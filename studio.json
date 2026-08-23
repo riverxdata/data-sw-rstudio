@@ -1,18 +1,5 @@
 {
   "services": [
     {"name": "rstudio", "port": 8787, "path": "/"}
-  ],
-  "middlewares": {
-    "rstudio-proxy-headers": {
-      "headers": {
-        "customRequestHeaders": {
-          "X-RStudio-Root-Path": "/",
-          "X-Forwarded-Proto": "https"
-        },
-        "customResponseHeaders": {
-          "X-RStudio-Root-Path": "/"
-        }
-      }
-    }
-  }
+  ]
 }

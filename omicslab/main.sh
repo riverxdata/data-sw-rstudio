@@ -175,14 +175,5 @@ fi
 $PODMAN run --rm -i \
     --name "$CONTAINER_NAME" \
     --network host \
-    -v "${HOST_HOME}:${HOST_HOME}" \
-    -w "${HOST_HOME}" \
     -e DISABLE_AUTH=true \
-    "$CONTAINER_IMAGE" \
-    bash -c "exec rserver \
-        --www-address=0.0.0.0 \
-        --www-port=${PORT} \
-        --www-root-path=/ \
-        --server-working-dir ${HOST_HOME} \
-        --auth-none=1 \
-        --server-daemonize=0"
+    "$CONTAINER_IMAGE"
