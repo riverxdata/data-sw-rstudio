@@ -159,19 +159,11 @@ if [ -n "$_stale_pids" ]; then
 fi
 
 # Use the default s6-overlay entrypoint — it processes DISABLE_AUTH=true
-# into auth-none=1 config automatically.
-# Mount rserver.conf with www-root-path=/ for reverse proxy support.
+# into auth-none=1 config automatically. Port 8787 is the default.
 # --network host: required for port forwarding inside Docker-in-Docker.
 # Foreground mode (--rm -i, no -d): script blocks so the platform knows the job is active.
-mkdir -p "${TOOL_DIR}/config"
-cat > "${TOOL_DIR}/config/rserver.conf" <<'RSERVER'
-rsession-which-r=/usr/local/bin/R
-www-root-path=/
-RSERVER
-
 $PODMAN run --rm -i \
     --name "$CONTAINER_NAME" \
     --network host \
     -e DISABLE_AUTH=true \
-    -v "${TOOL_DIR}/config/rserver.conf:/etc/rstudio/rserver.conf:ro" \
     "$CONTAINER_IMAGE"
