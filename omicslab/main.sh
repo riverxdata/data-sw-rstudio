@@ -17,6 +17,18 @@ mkdir -p "$RSTUDIO_WORKSPACE"
 # graphroot (/var/lib/containers/storage) is exactly where the Docker simulation
 # bind-mounts its host-backed storage, so this works unchanged on both the VM
 # and the nested-container simulation.
+#
+# Netavark (podman >=5's network backend) requires a firewall backend (nftables
+# or iptables) to program port-mapping rules. The base image does not ship one,
+# so install it at runtime when missing. (Note: `passt` only helps *rootless*
+# podman via the pasta driver, not this rootful setup, so it is not used here.)
+
+if ! command -v nft >/dev/null 2>&1 && ! command -v iptables >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update >/dev/null 2>&1 || true
+        apt-get install -y nftables iptables >/dev/null 2>&1 || true
+    fi
+fi
 
 # Diagnostic: confirm podman auto-config (netavark + overlay).
 echo "--- podman effective config ---"
