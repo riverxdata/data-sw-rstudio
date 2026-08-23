@@ -30,6 +30,11 @@ if ! command -v nft >/dev/null 2>&1 && ! command -v iptables >/dev/null 2>&1; th
     fi
 fi
 
+# Clean up stale CNI bridge left by older podman versions.  If this DOWN
+# interface still has a route for 10.88.0.0/16, netavark packets silently
+# go to the dead link instead of the live podman0 bridge.
+ip link del cni-podman0 2>/dev/null || true
+
 # Diagnostic: confirm podman auto-config (netavark + overlay).
 echo "--- podman effective config ---"
 podman info 2>&1 | grep -iE "networkBackend|graphDriverName" || true
@@ -117,10 +122,19 @@ CONTAINER_PY_SITE="/home/rstudio/.local/lib/python3.12/site-packages"
 # Remove any existing container with the same name before starting.
 podman rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
+# Clean up ALL stale podman containers left from previous jobs to free
+# port mappings and avoid stale netavark DNAT rules.
+podman rm -f -a 2>/dev/null || true
+
+# Mount only the workspace (rw) and the job data directory (ro, contains
+# mount-s3 data).  Do NOT mount $HOME or /tmp which may contain IAM
+# credentials or other sensitive files.
+JOB_DIR="$HOME/sdk/jobs/${job_id:-.}"
+
 podman run --rm -i \
     --name "$CONTAINER_NAME" \
     -p "$PORT:8787" \
-    -v $HOME:$HOME \
-    -w $HOME \
+    -v "$RSTUDIO_WORKSPACE:/home/rstudio/rstudio-workspace" \
+    -v "$JOB_DIR:/home/rstudio/job:ro" \
     -e DISABLE_AUTH=true \
     $DOCKER_IMAGE
