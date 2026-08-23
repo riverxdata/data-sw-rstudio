@@ -173,5 +173,3 @@ $PODMAN run --rm -i \
         --www-root-path=/ \
         --auth-none=1 \
         --server-daemonize=0"
-
-echo "RStudio started on http://localhost:$PORT"
