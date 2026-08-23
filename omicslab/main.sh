@@ -184,6 +184,7 @@ $PODMAN run --rm -i \
     --name "$CONTAINER_NAME" \
     --network host \
     -e DISABLE_AUTH=true \
+    -v "$HOST_HOME:$HOST_HOME" \
     --entrypoint /usr/lib/rstudio-server/bin/rserver \
     "$CONTAINER_IMAGE" \
     --auth-none=1 \
